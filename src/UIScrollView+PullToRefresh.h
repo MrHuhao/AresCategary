@@ -27,6 +27,8 @@
 
 - (void)refreshFinished;
 
+-(void)removeKOV;
+
 @end
 
 @protocol UIScrollViewPullResfreshDelegate <NSObject>
@@ -80,6 +82,8 @@
 - (void)setPullToLoadMoreViewReleaseText:(NSString *)releaseText;
 - (void)setPullToLoadMoreViewLoadingText:(NSString *)loadingText;
 - (void)setPullToLoadMoreViewLoadedText:(NSString *)loadedText;
+
+- (void)removeKVO;
 
 @end
 

@@ -4,6 +4,8 @@
 
 #import "UIScrollView+PullToRefresh.h"
 
+#import "NSObject+Block.h"
+
 #import <objc/runtime.h>
 
 enum {
@@ -16,8 +18,10 @@ enum {
 
 typedef NSUInteger DDPullToRefreshState;
 
+//scrollview 是否在动画中
+static BOOL isScrollViewAnimation =NO;
 
-@interface DDPullToRefresh () 
+@interface DDPullToRefresh ()
 
 - (id)initWithScrollView:(UIScrollView*)scrollView;
 - (void)rotateArrow:(float)degrees hide:(BOOL)hide;
@@ -37,7 +41,8 @@ typedef NSUInteger DDPullToRefreshState;
 @property (nonatomic, strong, readonly) UILabel *dateLabel;
 @property (nonatomic, strong, readonly) NSDateFormatter *dateFormatter;
 
-@property (nonatomic, strong) UIScrollView *scrollView;
+@property (nonatomic, assign) UIScrollView *scrollView;
+
 @property (nonatomic, readwrite) UIEdgeInsets originalScrollViewContentInset;
 
 @end
@@ -65,14 +70,6 @@ typedef NSUInteger DDPullToRefreshState;
 @synthesize loadingText = _loadingText;
 @synthesize loadedText = _loadedText;
 
-- (void)dealloc {
-    
-   
-    
-//    Block_release((__bridge const void *)pullToRefreshHandler);
-//    Block_release((__bridge const void *)pullToLoadMoreHandler);
-    
-}
 
 -(void)removeKOV{
 
@@ -96,7 +93,7 @@ typedef NSUInteger DDPullToRefreshState;
     titleLabel.backgroundColor = [UIColor clearColor];
     titleLabel.textColor = textColor;
     [self addSubview:titleLabel];
-        
+    
     [self addSubview:self.arrow];
     
     [scrollView addObserver:self forKeyPath:@"contentOffset" options:NSKeyValueObservingOptionNew context:nil];
@@ -104,12 +101,15 @@ typedef NSUInteger DDPullToRefreshState;
     
     self.originalScrollViewContentInset = scrollView.contentInset;
 	
-    self.state = DDPullToRefreshStateHidden;    
+    self.state = DDPullToRefreshStateHidden;
     
     return self;
 }
 
 - (void)layoutSubviews {
+    
+    self.originalScrollViewContentInset = self.scrollView.contentInset;
+    
     CGFloat remainingWidth = self.superview.bounds.size.width-200;
     float position = 0.50;
     
@@ -128,7 +128,10 @@ typedef NSUInteger DDPullToRefreshState;
     self.activityIndicatorView.center = self.arrow.center;
     
     if (self.pullToRefreshHandler) {
-        self.frame = CGRectMake(0, -RefreshViewHeight, _scrollView.bounds.size.width, RefreshViewHeight);
+        CGFloat top =self.scrollView.contentInset.top;
+        CGFloat top1 =[self.scrollView theBeiginContentOffset].y;
+        
+        self.frame = CGRectMake(0, -RefreshViewHeight -(top +top1), _scrollView.bounds.size.width, RefreshViewHeight);
     }
     else if (self.pullToLoadMoreHandler){
         
@@ -226,12 +229,17 @@ typedef NSUInteger DDPullToRefreshState;
 }
 
 - (void)setScrollViewContentOffset:(CGPoint)contentoffset{
-
-    [UIView animateWithDuration:0.5 delay:0 options:UIViewAnimationOptionAllowUserInteraction|UIViewAnimationOptionBeginFromCurrentState animations:^{
-
+    
+    isScrollViewAnimation =YES;
+    
+    [UIView animateWithDuration:0.35 delay:0 options:UIViewAnimationOptionAllowUserInteraction|UIViewAnimationOptionBeginFromCurrentState animations:^{
+        
         [_scrollView setContentOffset:contentoffset animated:NO];
         
     } completion:^(BOOL finished) {
+        
+        isScrollViewAnimation =NO;
+        
         if(_state == DDPullToRefreshStateHidden)
             [UIView animateWithDuration:0.2 delay:0 options:UIViewAnimationOptionAllowUserInteraction animations:^{
                 arrow.alpha = 0;
@@ -245,7 +253,7 @@ typedef NSUInteger DDPullToRefreshState;
 }
 
 - (void)setLastUpdatedDate:(NSDate *)newLastUpdatedDate title:(NSString *)strTile{
-
+    
     if (newLastUpdatedDate) {
         self.dateLabel.text = [NSString stringWithFormat:@"%@%@", strTile,newLastUpdatedDate?[self.dateFormatter stringFromDate:newLastUpdatedDate]:@"无"];
     }
@@ -254,7 +262,160 @@ typedef NSUInteger DDPullToRefreshState;
     }
 }
 
-#pragma mark -
+
+- (void)setState:(DDPullToRefreshState)newState {
+    _state = newState;
+    
+    if (self.pullToRefreshHandler) {
+        
+        switch (newState) {
+                
+            case DDPullToRefreshStateHidden:{
+                
+                [self.activityIndicatorView stopAnimating];
+                
+                CGPoint p =CGPointMake(self.scrollView.contentOffset.x, -self.scrollView.contentInset.top);
+                [self setScrollViewContentOffset:p];
+                [self rotateArrow:0 hide:YES];
+            }
+                break;
+                
+            case DDPullToRefreshStateVisible:{
+                
+                titleLabel.text = self.pullingText;
+                arrow.alpha = 1;
+                [self.activityIndicatorView stopAnimating];
+                [self rotateArrow:0 hide:NO];
+            }
+                
+                break;
+                
+            case DDPullToRefreshStateTriggered:{
+                
+                titleLabel.text =self.releaseText;
+                [self rotateArrow:M_PI hide:NO];
+            }
+                
+                break;
+                
+            case DDPullToRefreshStateLoading:{
+                
+                titleLabel.text = self.loadingText;
+                [self.activityIndicatorView startAnimating];
+                [self setScrollViewContentOffset:CGPointMake(0, self.frame.origin.y -self.scrollView.contentInset.top)];
+                [self rotateArrow:0 hide:YES];
+                _scrollView.isRefresh =YES;
+                _scrollView.isLoadMore =NO;
+                pullToRefreshHandler();
+                
+            }
+                break;
+                
+            case DDPullToRefreshStateLoaded:{
+                
+                titleLabel.text =self.loadedText;
+                [self setLastUpdatedDate:[NSDate date] title:@"上次更新时间："];
+                [self.activityIndicatorView stopAnimating];
+                
+                CGPoint p =CGPointMake(0, -self.scrollView.contentInset.top);
+//                [self setScrollViewContentOffset:p];
+                
+                __weak id tempSelf =self;
+                
+                if (isScrollViewAnimation) {
+                    
+                    [self perform:^{
+                        
+                        [tempSelf setScrollViewContentOffset:p];
+                        
+                    } andDelay:0.35];
+                }
+                else{
+                
+                    [self setScrollViewContentOffset:p];
+                }
+                
+
+                [self rotateArrow:0 hide:YES];
+            }
+                break;
+        }
+        
+    }
+    else if (self.pullToLoadMoreHandler){
+        
+        
+        if (_scrollView.noMore) {
+            
+            //无更多数据
+            self.activityIndicatorView.hidden =YES;
+            
+            self.arrow.hidden =YES;
+            
+            self.titleLabel.text =@"已加载全部数据";
+            
+        }
+        else {
+            
+            //
+            
+            switch (newState) {
+                    
+                case DDPullToRefreshStateHidden:{
+                    
+                    if (_scrollView.contentSize.height <_scrollView.frame.size.height) {
+                        self.hidden =YES;
+                    }
+                    else{
+                        [self.activityIndicatorView stopAnimating];
+                        [self setScrollViewContentOffset:CGPointMake(0,  _scrollView.contentSize.height -_scrollView.frame.size.height)];
+                        [self rotateArrow:0 hide:YES];
+                    }
+                }
+                    break;
+                    
+                case DDPullToRefreshStateVisible:{
+                    titleLabel.text = self.pullingText;
+                    arrow.alpha = 1;
+                    [self.activityIndicatorView stopAnimating];
+                    [self rotateArrow:M_PI hide:NO];
+                }
+                    break;
+                    
+                case DDPullToRefreshStateTriggered:{
+                    titleLabel.text = self.releaseText;
+                    [self rotateArrow:0 hide:NO];
+                }
+                    
+                    break;
+                    
+                case DDPullToRefreshStateLoading:{
+                    
+                    titleLabel.text = self.loadingText;
+                    [self.activityIndicatorView startAnimating];
+                    [self setScrollViewContentOffset:CGPointMake(0,  _scrollView.contentSize.height -_scrollView.frame.size.height +RefreshViewHeight)];
+                    [self rotateArrow:0 hide:YES];
+                    _scrollView.isLoadMore =YES;
+                    _scrollView.isRefresh =NO;
+                    pullToLoadMoreHandler();
+                }
+                    break;
+                    
+                case DDPullToRefreshStateLoaded:{
+                    
+                    titleLabel.text = self.loadedText;
+                    [self.activityIndicatorView stopAnimating];
+                    [self setScrollViewContentOffset:CGPointMake(0,  _scrollView.contentSize.height -_scrollView.frame.size.height)];
+                    [self rotateArrow:0 hide:YES];
+                }
+            }
+            
+        }
+    }
+}
+
+
+#pragma mark - KVO
 
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context {
     if([keyPath isEqualToString:@"contentOffset"] && self.state != DDPullToRefreshStateLoading){
@@ -266,8 +427,10 @@ typedef NSUInteger DDPullToRefreshState;
 
 #pragma mark -scrollViewDidScroll
 
-- (void)scrollViewDidScroll:(CGPoint)contentOffset {    
-    CGFloat scrollOffsetThreshold = self.frame.origin.y-self.originalScrollViewContentInset.top;
+- (void)scrollViewDidScroll:(CGPoint)contentOffset {
+    
+    CGFloat scrollTop =self.originalScrollViewContentInset.top;
+    CGFloat scrollOffsetThreshold = self.frame.origin.y-scrollTop;
     
     if (self.pullToRefreshHandler) {
         
@@ -278,7 +441,7 @@ typedef NSUInteger DDPullToRefreshState;
             self.state =DDPullToRefreshStateHidden;
         }
         else if(!self.scrollView.isDragging && self.state == DDPullToRefreshStateTriggered){
-
+            
             self.state = DDPullToRefreshStateLoading;
         }
         else if(contentOffset.y > scrollOffsetThreshold && contentOffset.y < -self.originalScrollViewContentInset.top && self.scrollView.isDragging && self.state != DDPullToRefreshStateLoading){
@@ -336,125 +499,14 @@ typedef NSUInteger DDPullToRefreshState;
     self.state = DDPullToRefreshStateHidden;
 }
 
-- (void)setState:(DDPullToRefreshState)newState {
-    _state = newState;
-    
-    if (self.pullToRefreshHandler) {
-        
-        switch (newState) {
-                
-            case DDPullToRefreshStateHidden:{
-                
-                [self.activityIndicatorView stopAnimating];
-                [self setScrollViewContentOffset:[_scrollView theBeiginContentOffset]];
-                [self rotateArrow:0 hide:YES];
-            }
-                break;
-                
-            case DDPullToRefreshStateVisible:{
-            
-                titleLabel.text = self.pullingText;
-                arrow.alpha = 1;
-                [self.activityIndicatorView stopAnimating];
-                [self rotateArrow:0 hide:NO];
-            }
-
-                break;
-                
-            case DDPullToRefreshStateTriggered:{
-            
-                titleLabel.text =self.releaseText;
-                [self rotateArrow:M_PI hide:NO];
-            }
-
-                break;
-                
-            case DDPullToRefreshStateLoading:{
-
-                titleLabel.text = self.loadingText;
-                [self.activityIndicatorView startAnimating];
-                [self setScrollViewContentOffset:CGPointMake(0, self.frame.origin.y)];
-                [self rotateArrow:0 hide:YES];
-                _scrollView.isRefresh =YES;
-                _scrollView.isLoadMore =NO;
-                pullToRefreshHandler();
-                
-            }
-                break;
-                
-            case DDPullToRefreshStateLoaded:{
-            
-                titleLabel.text =self.loadedText;
-                [self setLastUpdatedDate:[NSDate date] title:@"上次更新时间："];
-                [self.activityIndicatorView stopAnimating];
-                [self setScrollViewContentOffset:CGPointMake(0, 0)];
-                [self rotateArrow:0 hide:YES];
-            }
-                break;
-        }
-
-    }
-    else if (self.pullToLoadMoreHandler){
-    
-        switch (newState) {
-                
-            case DDPullToRefreshStateHidden:{
-                
-                if (_scrollView.contentSize.height <_scrollView.frame.size.height) {
-                    self.hidden =YES;
-                }
-                else{
-                    [self.activityIndicatorView stopAnimating];
-                    [self setScrollViewContentOffset:CGPointMake(0,  _scrollView.contentSize.height -_scrollView.frame.size.height)];
-                    [self rotateArrow:0 hide:YES];
-                }
-            }
-                break;
-                
-            case DDPullToRefreshStateVisible:{
-                titleLabel.text = self.pullingText;
-                arrow.alpha = 1;
-                [self.activityIndicatorView stopAnimating];
-                [self rotateArrow:M_PI hide:NO];
-            }
-                break;
-                
-            case DDPullToRefreshStateTriggered:{
-                titleLabel.text = self.releaseText;
-                [self rotateArrow:0 hide:NO];
-            }
-
-                break;
-                
-            case DDPullToRefreshStateLoading:{
-
-                titleLabel.text = self.loadingText;
-                [self.activityIndicatorView startAnimating];
-                [self setScrollViewContentOffset:CGPointMake(0,  _scrollView.contentSize.height -_scrollView.frame.size.height +RefreshViewHeight)];
-                [self rotateArrow:0 hide:YES];
-                _scrollView.isLoadMore =YES;
-                _scrollView.isRefresh =NO;
-                pullToLoadMoreHandler();
-            }
-                break;
-                
-            case DDPullToRefreshStateLoaded:{
-            
-                titleLabel.text = self.loadedText;
-                [self.activityIndicatorView stopAnimating];
-                [self setScrollViewContentOffset:CGPointMake(0,  _scrollView.contentSize.height -_scrollView.frame.size.height)];
-                [self rotateArrow:0 hide:YES];
-            }
-        }
-    }
-}
-
 - (void)rotateArrow:(float)degrees hide:(BOOL)hide {
     [UIView animateWithDuration:0.2 delay:0 options:UIViewAnimationOptionAllowUserInteraction animations:^{
         self.arrow.layer.transform = CATransform3DMakeRotation(degrees, 0, 0, 1);
         self.arrow.layer.opacity = !hide;
     } completion:NULL];
 }
+
+
 
 @end
 
@@ -467,8 +519,6 @@ static char *UIScrollViewPullToLoadMoreView ="UIScrollViewPullToLoadMoreView";
 static char *UIScrollViewPullNoMore ="UIScrollViewPullNoMore";
 static char *UIScollViewPullIsRefresh ="UIScollViewPullIsRefresh";
 static char *UIScollViewPullIsLoadMore ="UIScollViewPullIsLoadMore";
-
-static char *UIScrollViewBeginOffset ="UIScrollViewBeginOffset";
 
 @implementation UIScrollView (DDPullToRefresh)
 
@@ -484,6 +534,14 @@ static char *UIScrollViewBeginOffset ="UIScrollViewBeginOffset";
 
 @dynamic pageNumber;
 
+
+//-(void)dealloc{
+//
+//    //测试 UIScrollView 是否销毁
+//    
+//    NSLog(@"dealloc");
+//}
+
 #pragma mark -
 
 - (void)setPullToRefreshHandler:(void (^)(void))actionHandler {
@@ -491,44 +549,13 @@ static char *UIScrollViewBeginOffset ="UIScrollViewBeginOffset";
     DDPullToRefresh *pullToRefreshView = [[DDPullToRefresh alloc] initWithScrollView:self];
     pullToRefreshView.pullToRefreshHandler =actionHandler;
     self.pullToRefreshView = pullToRefreshView;
-    
-    /*
-    DDPullToRefresh *pullToRefreshView = [[DDPullToRefresh alloc] initWithScrollView:self];
-    
-    __weak id  tmp =self;
-    __weak id  tmpDelegate =self.delegate;
-    
-    pullToRefreshView.pullToRefreshHandler = ^{
-        
-        if ([tmpDelegate respondsToSelector:@selector(scrollViewRefresh:)]) {
-            [tmpDelegate scrollViewRefresh:tmp];
-        }
-    };
-    
-    self.pullToRefreshView = pullToRefreshView;
-     */
 }
 
 - (void)setPullToLoadMoreHandler:(void (^)(void))actionHandler {
     
     DDPullToRefresh *pullToLoadMoreView = [[DDPullToRefresh alloc] initWithScrollView:self];
-    pullToLoadMoreView.pullToRefreshHandler =actionHandler;
+    pullToLoadMoreView.pullToLoadMoreHandler =actionHandler;
     self.pullToLoadMoreView = pullToLoadMoreView;
-    
-    /*
-    DDPullToRefresh *pullToLoadMoreView = [[DDPullToRefresh alloc] initWithScrollView:self];
-
-    __weak id  tmp =self;
-    __weak id  tmpDelegate =self.delegate;
-    
-    pullToLoadMoreView.pullToLoadMoreHandler = ^{
-    
-        if ([tmpDelegate respondsToSelector:@selector(scrollViewLoadMore:)]) {
-            [tmpDelegate scrollViewLoadMore:tmp];
-        }
-    };
-    self.pullToLoadMoreView = pullToLoadMoreView;
-     */
 }
 
 - (void)refreshFinished{
@@ -537,18 +564,9 @@ static char *UIScrollViewBeginOffset ="UIScrollViewBeginOffset";
 }
 
 -(void)loadMoreFinished{
-
+    
     [self.pullToLoadMoreView refreshFinished];
 }
-
--(void)removeFromSuperview{
-
-    [self.pullToLoadMoreView removeKOV];
-    [self.pullToRefreshView removeKOV];
-    
-    [super removeFromSuperview];
-}
-
 
 #pragma mark > Customization
 
@@ -564,7 +582,7 @@ static char *UIScrollViewBeginOffset ="UIScrollViewBeginOffset";
 
 - (void)setPullToRefreshViewActivityIndicatorStyle:(UIActivityIndicatorViewStyle)style {
     
-//    [self.pullToRefreshView. setActivityIndicatorStyle:style];
+    //    [self.pullToRefreshView. setActivityIndicatorStyle:style];
     [self.pullToRefreshView.activityIndicatorView setActivityIndicatorViewStyle:style];
 }
 
@@ -585,7 +603,9 @@ static char *UIScrollViewBeginOffset ="UIScrollViewBeginOffset";
 
 - (void)setPullToRefreshViewLoadedText:(NSString *)loadedText {
     
-    [self.pullToRefreshView setLoadedText:loadedText];
+    DDPullToRefresh *view =self.pullToRefreshView;
+    
+    [view setLoadedText:loadedText];
 }
 
 - (UILabel *)pullToLoadMoreLabel {
@@ -605,7 +625,9 @@ static char *UIScrollViewBeginOffset ="UIScrollViewBeginOffset";
 
 - (void)setPullToLoadMoreViewPullingText:(NSString *)pullingText {
     
-    [self.pullToLoadMoreView setPullingText:pullingText];
+    DDPullToRefresh *view =self.pullToLoadMoreView;
+    
+    [view setPullingText:pullingText];
 }
 
 - (void)setPullToLoadMoreViewReleaseText:(NSString *)releaseText {
@@ -628,7 +650,7 @@ static char *UIScrollViewBeginOffset ="UIScrollViewBeginOffset";
 
 
 -(CGPoint)theBeiginContentOffset{
-
+    
     CGPoint point =CGPointZero;
     
     id <UIScrollPullToRefreshViewDelegate> aDelegate =self.delegate;
@@ -652,8 +674,8 @@ static char *UIScrollViewBeginOffset ="UIScrollViewBeginOffset";
 
 
 -(BOOL)noMore{
-
-     NSNumber *n =objc_getAssociatedObject(self, &UIScrollViewPullNoMore);
+    
+    NSNumber *n =objc_getAssociatedObject(self, &UIScrollViewPullNoMore);
     if (n ==nil || ![n isKindOfClass:[NSNumber class]]) {
         return NO;
     }
@@ -662,21 +684,21 @@ static char *UIScrollViewBeginOffset ="UIScrollViewBeginOffset";
 }
 
 -(void)setNoMore:(BOOL)noMore{
-
+    
     objc_setAssociatedObject(self, &UIScrollViewPullNoMore,
                              [NSNumber numberWithBool:noMore],
                              OBJC_ASSOCIATION_ASSIGN);
 }
 
 -(void)setRefresh:(BOOL)isRefresh{
-
+    
     objc_setAssociatedObject(self, &UIScollViewPullIsRefresh,
                              [NSNumber numberWithBool:isRefresh],
                              OBJC_ASSOCIATION_ASSIGN);
 }
 
 -(BOOL)isRefresh{
-
+    
     NSNumber *n =objc_getAssociatedObject(self, &UIScollViewPullIsRefresh);
     if (n ==nil || ![n isKindOfClass:[NSNumber class]]) {
         return NO;
@@ -685,14 +707,14 @@ static char *UIScrollViewBeginOffset ="UIScrollViewBeginOffset";
 }
 
 -(void)setLoadMore:(BOOL)isLoadMore{
-
+    
     objc_setAssociatedObject(self, &UIScollViewPullIsLoadMore,
                              [NSNumber numberWithBool:isLoadMore],
                              OBJC_ASSOCIATION_ASSIGN);
 }
 
 -(BOOL)isLoadMore{
-
+    
     NSNumber *n =objc_getAssociatedObject(self, &UIScollViewPullIsLoadMore);
     if (n ==nil || ![n isKindOfClass:[NSNumber class]]) {
         return NO;
@@ -728,7 +750,14 @@ static char *UIScrollViewBeginOffset ="UIScrollViewBeginOffset";
 
 - (DDPullToRefresh *)pullToLoadMoreView {
     
-    return objc_getAssociatedObject(self, &UIScrollViewPullToLoadMoreView);
+    DDPullToRefresh *view  =objc_getAssociatedObject(self, &UIScrollViewPullToLoadMoreView);
+    return view;
 }
+
+//- (void)removeKVO{
+//    
+//    [self.pullToLoadMoreView removeKOV];
+//    [self.pullToRefreshView removeKOV];
+//}
 
 @end

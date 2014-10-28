@@ -111,7 +111,7 @@
 
 - (UIImage *)applyExtraLightEffect
 {
-    UIColor *tintColor = [UIColor colorWithWhite:0.97 alpha:0.32];
+    UIColor *tintColor = [UIColor colorWithWhite:0.97 alpha:0.82];
     return [self applyBlurWithRadius:20 tintColor:tintColor saturationDeltaFactor:1.8 maskImage:nil];
 }
 

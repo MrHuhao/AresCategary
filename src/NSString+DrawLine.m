@@ -17,7 +17,10 @@
     NSInteger i_width =(NSInteger)width;
     NSInteger i_newWidth =(NSInteger)size.width;
     
-    NSInteger numberOfLine =i_newWidth/i_width +(i_width%i_newWidth >0 ? 1:0);
+    NSInteger numberOfLine =0;
+    if (i_newWidth >0) {
+        numberOfLine =i_newWidth/i_width +(i_width%i_newWidth >0 ? 1:0);
+    }
     
     return numberOfLine;
 }
